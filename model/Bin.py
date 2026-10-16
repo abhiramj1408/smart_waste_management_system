@@ -72,6 +72,12 @@ class Bin:
         self.capacity = 0
         self.temperature_c = 21.5
         self.last_updated = f"{time.strftime('%H:%M:%S')} (Emptied)"
+        self.items.createDataframe([])
+        if self.path and os.path.exists(self.path):
+            try:
+                open(self.path, "w").close()
+            except Exception:
+                pass
 
     def getItems(self) -> list:
         return self.items.getRows()
