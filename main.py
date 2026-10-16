@@ -10,14 +10,6 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
-
-# Optional WebRTC import
-try:
-    from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
-    HAS_WEBRTC = True
-except ImportError:
-    HAS_WEBRTC = False
 
 # Project module imports
 from app.DigitalTwinState import DigitalTwinState
@@ -31,7 +23,7 @@ WORLD_MODEL_PATH = ROOT / "yolov8s-world.pt"
 
 # Page configuration
 st.set_page_config(
-    page_title="WASTE MANAGEMENT",
+    page_title="Smart Waste Digital Twin",
     page_icon="♻️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -151,87 +143,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# =========================================================================
-# 2. SUBTLE BLUE FADING TRAIL ON MOUSE POINTER
-# =========================================================================
-subtle_blue_mouse_trail = """
-<script>
-(function() {
-    try {
-        const doc = window.parent.document;
-        if (doc.getElementById("mouse-trail-canvas")) return;
-
-        const canvas = doc.createElement("canvas");
-        canvas.id = "mouse-trail-canvas";
-        canvas.style.position = "fixed";
-        canvas.style.top = "0";
-        canvas.style.left = "0";
-        canvas.style.width = "100vw";
-        canvas.style.height = "100vh";
-        canvas.style.pointerEvents = "none";
-        canvas.style.zIndex = "999999";
-        doc.body.appendChild(canvas);
-
-        const ctx = canvas.getContext("2d");
-        function resize() {
-            canvas.width = window.parent.innerWidth;
-            canvas.height = window.parent.innerHeight;
-        }
-        resize();
-        window.parent.addEventListener("resize", resize);
-
-        const particles = [];
-        // SUBTLE BLUE SHADES ONLY
-        const blueColors = ["#38bdf8", "#60a5fa", "#2563eb", "#93c5fd"];
-
-        window.parent.addEventListener("mousemove", function(e) {
-            // Only 1 small particle per movement for a very short, subtle tip trail
-            particles.push({
-                x: e.clientX,
-                y: e.clientY,
-                vx: (Math.random() - 0.5) * 0.8,
-                vy: (Math.random() - 0.5) * 0.8,
-                radius: Math.random() * 1.5 + 1.2,
-                alpha: 0.9,
-                color: blueColors[Math.floor(Math.random() * blueColors.length)]
-            });
-            // Cap particles to keep trail short
-            if (particles.length > 15) {
-                particles.shift();
-            }
-        });
-
-        function render() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            for (let i = particles.length - 1; i >= 0; i--) {
-                const p = particles[i];
-                p.x += p.vx;
-                p.y += p.vy;
-                p.alpha -= 0.08; // Fast fade-out so trail is short and subtle
-                p.radius *= 0.92;
-                if (p.alpha <= 0 || p.radius < 0.3) {
-                    particles.splice(i, 1);
-                    continue;
-                }
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-                ctx.fillStyle = p.color;
-                ctx.globalAlpha = p.alpha;
-                ctx.shadowBlur = 4;
-                ctx.shadowColor = p.color;
-                ctx.fill();
-            }
-            ctx.globalAlpha = 1.0;
-            requestAnimationFrame(render);
-        }
-        render();
-    } catch (err) {
-        console.log("Blue mouse trail init:", err);
-    }
-})();
-</script>
-"""
-components.html(subtle_blue_mouse_trail, height=0, width=0)
+# Mouse-pointer bubble/trail animation removed.
 
 
 # =========================================================================
@@ -241,39 +153,24 @@ components.html(subtle_blue_mouse_trail, height=0, width=0)
 def get_twin():
     return DigitalTwinState(cooldown_seconds=1.5, base_dir=str(ROOT))
 
+
 @st.cache_resource
 def get_ai(api_key: str = None):
     return GenAI(api_key=api_key)
 
+
 twin = get_twin()
+
 
 # Lazy YOLO loader to keep initial startup < 1.5s
 @st.cache_resource
-
 def load_yolo_lazy():
     from ultralytics import YOLO
-
-    try:
-        if YOLO11_PATH.exists():
-            model_path = YOLO11_PATH
-            model_name = "YOLO11n"
-        elif WORLD_MODEL_PATH.exists():
-            model_path = WORLD_MODEL_PATH
-            model_name = "YOLO-World"
-        else:
-            model_path = "yolov8n.pt"
-            model_name = "YOLOv8n"
-
-        print(f"[YOLO] Loading model: {model_path}")
-        model = YOLO(str(model_path))
-        print(f"[YOLO] Model loaded successfully: {model_name}")
-
-        return model, model_name
-
-    except Exception as exc:
-        print(f"[YOLO LOAD ERROR] {type(exc).__name__}: {exc}")
-        raise
-
+    if YOLO11_PATH.exists():
+        return YOLO(str(YOLO11_PATH)), "YOLO11n"
+    elif WORLD_MODEL_PATH.exists():
+        return YOLO(str(WORLD_MODEL_PATH)), "YOLO-World"
+    return YOLO("yolov8n.pt"), "YOLOv8n"
 
 
 # =========================================================================
@@ -318,15 +215,52 @@ def render_speedometer_html(bin_obj) -> str:
     return html
 
 
+def render_fleet_speedometer_html(overall_pct: int, total_items: int, total_kg: float) -> str:
+    """Generates the 7th master gauge showing average fleet fill across all bins."""
+    cap = max(0, min(100, overall_pct))
+    color = "#38bdf8"  # Always cyan-blue for fleet gauge
+    total_arc = 230.0
+    dash_offset = round(total_arc - (cap / 100.0) * total_arc, 1)
+    angle_rad = math.radians(-120.0 + (cap * 2.4))
+    needle_x = round(70.0 + 40.0 * math.sin(angle_rad), 1)
+    needle_y = round(82.0 - 40.0 * math.cos(angle_rad), 1)
+    track_color = "#ef4444" if cap >= 75 else ("#eab308" if cap >= 60 else "#38bdf8")
+    badge_cls = "badge-critical" if cap >= 75 else ("badge-filling" if cap >= 60 else "badge-optimal")
+    badge_txt = "CRITICAL" if cap >= 75 else ("FILLING" if cap >= 60 else "OPTIMAL")
+    card_crit = "critical-pulse" if cap >= 75 else ""
+
+    html = (
+        f'<div class="speedo-card {card_crit}" style="border-top:3px solid #38bdf8;background:rgba(10,20,50,0.95);">'
+        f'<div class="speedo-header"><span>🌐 Fleet Average</span></div>'
+        f'<svg viewBox="0 0 140 110" style="width:100%;max-height:105px;display:block;margin:0 auto;">'
+        f'<path d="M 20 82 A 55 55 0 1 1 120 82" fill="none" stroke="#1e293b" stroke-width="9" stroke-linecap="round"/>'
+        f'<line x1="28" y1="78" x2="33" y2="73" stroke="#64748b" stroke-width="1.5"/>'
+        f'<line x1="70" y1="28" x2="70" y2="34" stroke="#64748b" stroke-width="2"/>'
+        f'<line x1="112" y1="78" x2="107" y2="73" stroke="#64748b" stroke-width="1.5"/>'
+        f'<path d="M 20 82 A 55 55 0 1 1 120 82" fill="none" stroke="{track_color}" stroke-width="9" stroke-linecap="round" stroke-dasharray="230" stroke-dashoffset="{dash_offset}" style="filter:drop-shadow(0 0 5px {track_color});"/>'
+        f'<line x1="70" y1="82" x2="{needle_x}" y2="{needle_y}" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" style="filter:drop-shadow(0 0 2px #fff);"/>'
+        f'<circle cx="70" cy="82" r="5" fill="#38bdf8"/>'
+        f'<circle cx="70" cy="82" r="2" fill="#0f172a"/>'
+        f'<text x="70" y="65" text-anchor="middle" font-size="19" font-weight="800" fill="{track_color}" font-family="sans-serif">{cap}%</text>'
+        f'<text x="70" y="102" text-anchor="middle" font-size="9" font-weight="600" fill="#94a3b8" font-family="sans-serif">FLEET AVG</text>'
+        f'</svg>'
+        f'<div style="margin-top:2px;"><span class="{badge_cls}">{badge_txt}</span></div>'
+        f'<div class="speedo-meta"><b>{total_items}</b> total items &bull; <b>{total_kg:.2f} kg</b></div>'
+        f'</div>'
+    )
+    return html
+
+
 # =========================================================================
 # 5. SIDEBAR
 # =========================================================================
 with st.sidebar:
     st.image("https://img.icons8.com/isometric/100/recycle-bin.png", width=65)
     st.markdown("### ⚙️ Digital Twin Controls")
-    
+
     st.markdown("##### 🤖 GenAI Configuration")
-    user_api_key = st.text_input("Gemini API Key", type="password", placeholder="Paste AI Studio Key...", help="Optional: If omitted, built-in intelligent AI analytics engine generates full truthful reports.")
+    user_api_key = st.text_input("Gemini API Key", type="password", placeholder="Paste AI Studio Key...",
+                                 help="Optional: If omitted, built-in intelligent AI analytics engine generates full truthful reports.")
     ai = get_ai(api_key=user_api_key if user_api_key else None)
     if ai.is_live():
         st.success("🟢 Gemini GenAI Live Connected")
@@ -336,7 +270,7 @@ with st.sidebar:
     st.divider()
     st.markdown("##### 👁️ Detection Settings")
     confidence = st.slider("Detection Confidence", 0.15, 0.90, 0.25, 0.05)
-    
+
     st.divider()
     st.markdown("##### 📍 Campus Zone")
     selected_zone = st.selectbox("Active Monitoring Zone", twin.zones, index=0)
@@ -344,7 +278,8 @@ with st.sidebar:
 
     st.divider()
     st.markdown("##### 🧪 Hackathon Demo Tools")
-    if st.button("📊 Load Benchmark Data (7-Day)", use_container_width=True, help="Loads verified sample dataset to demonstrate multi-day telemetry to judges."):
+    if st.button("📊 Load Benchmark Data (7-Day)", use_container_width=True,
+                 help="Loads verified sample dataset to demonstrate multi-day telemetry to judges."):
         DataUtil.load_benchmark_demo_data(twin.allbins)
         st.session_state["alert_dismissed"] = False
         st.success("Loaded verified benchmark data!")
@@ -357,7 +292,6 @@ with st.sidebar:
         st.session_state.pop("cached_ai_data", None)
         st.success("All 6 bins reset to clean 0% state!")
         st.rerun()
-
 
 # =========================================================================
 # 6. TOP HEADER & PROMINENT DOWNLOAD ACTION BAR
@@ -419,9 +353,10 @@ with top_col1:
     if st.button("📥 Generate & Download AI Report (PDF)", use_container_width=True, type="primary"):
         with st.spinner("Compiling certified executive report..."):
             from app.report_generator import generate_pdf_report
+
             ai_data = ai.generate_monthly_report(impact, bin_summaries, waste_dist)
             rep_payload = {
-                "title": "Waste Management Digital Twin",
+                "title": "Smart Waste Management Digital Twin",
                 "month": datetime.now().strftime("%B %Y"),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "bin_summaries": bin_summaries,
@@ -445,8 +380,9 @@ with top_col1:
 with top_col2:
     if "cached_ai_data" not in st.session_state:
         st.session_state["cached_ai_data"] = ai.generate_monthly_report(impact, bin_summaries, waste_dist)
-    
+
     from app.report_generator import generate_markdown_report
+
     rep_md_payload = {
         "title": "Smart Waste Management Digital Twin",
         "month": datetime.now().strftime("%B %Y"),
@@ -459,7 +395,7 @@ with top_col2:
     }
     md_content = generate_markdown_report(rep_md_payload)
     st.download_button(
-        label="📄 Download ",
+        label="📄 Download (Markdown)",
         data=md_content,
         file_name=f"Waste_Audit_{datetime.now().strftime('%b_%Y')}.md",
         mime="text/markdown",
@@ -495,14 +431,19 @@ with top_col5:
         st.toast(f"Logged {demo_choice} into Digital Twin!", icon="♻️")
         st.rerun()
 
-
 # =========================================================================
-# 7. THE 6 CIRCULAR SPEEDOMETER BINS DISPLAY (6 STREAMLIT COLUMNS)
+# 7. THE 7 CIRCULAR SPEEDOMETER BINS DISPLAY (6 BINS + 1 FLEET AVERAGE)
 # =========================================================================
-st.markdown("#### Smart Bin Fleet Telemetry ")
+st.markdown("#### 🧭 Smart Bin Fleet Telemetry (Circular Speedometers)")
 
-# RENDER ACROSS 6 SEPARATE STREAMLIT COLUMNS (COMPLETELY PREVENTS ANY CODE PARSING BUG!)
-speedo_cols = st.columns(6)
+# Compute fleet average for the 7th gauge
+_fleet_fills = [b.capacity for b in twin.allbins]
+_fleet_avg = round(sum(_fleet_fills) / len(_fleet_fills)) if _fleet_fills else 0
+_fleet_items = sum(len(b.getItems()) for b in twin.allbins)
+_fleet_kg = sum(b.current_weight_kg for b in twin.allbins)
+
+# RENDER ACROSS 7 COLUMNS — 6 individual bins + 1 Fleet Average master gauge
+speedo_cols = st.columns(7)
 for idx, b in enumerate(twin.allbins):
     with speedo_cols[idx]:
         st.markdown(render_speedometer_html(b), unsafe_allow_html=True)
@@ -512,23 +453,35 @@ for idx, b in enumerate(twin.allbins):
             st.toast(f"Emptied {b.name}!", icon="🚚")
             st.rerun()
 
-st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+# 7th column: Fleet Average Master Gauge (no Empty button — it's a computed summary)
+with speedo_cols[6]:
+    st.markdown(render_fleet_speedometer_html(_fleet_avg, _fleet_items, _fleet_kg), unsafe_allow_html=True)
+    st.caption("All bins combined")
 
 # Executive KPI Strip
 k1, k2, k3, k4, k5 = st.columns(5)
 with k1:
-    st.markdown(f'<div class="kpi-mini"><div class="kpi-lbl">Total Items Verified</div><div class="kpi-num">{impact["total_items"]}</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-mini"><div class="kpi-lbl">Total Items Verified</div><div class="kpi-num">{impact["total_items"]}</div></div>',
+        unsafe_allow_html=True)
 with k2:
-    st.markdown(f'<div class="kpi-mini"><div class="kpi-lbl">Measured Waste Diverted</div><div class="kpi-num">{impact["diverted_kg"]:.2f} kg</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-mini"><div class="kpi-lbl">Measured Waste Diverted</div><div class="kpi-num">{impact["diverted_kg"]:.2f} kg</div></div>',
+        unsafe_allow_html=True)
 with k3:
-    st.markdown(f'<div class="kpi-mini"><div class="kpi-lbl">Net CO₂ Avoided</div><div class="kpi-num">{impact["co2_saved_kg"]:.2f} kg</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-mini"><div class="kpi-lbl">Net CO₂ Avoided</div><div class="kpi-num">{impact["co2_saved_kg"]:.2f} kg</div></div>',
+        unsafe_allow_html=True)
 with k4:
-    st.markdown(f'<div class="kpi-mini"><div class="kpi-lbl">Recycling Efficiency</div><div class="kpi-num">{impact["recycling_rate"]:.1f}%</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-mini"><div class="kpi-lbl">Recycling Efficiency</div><div class="kpi-num">{impact["recycling_rate"]:.1f}%</div></div>',
+        unsafe_allow_html=True)
 with k5:
-    st.markdown(f'<div class="kpi-mini"><div class="kpi-lbl">Collection Fuel Saved</div><div class="kpi-num">{route_opt["fuel_saved_l"]:.2f} L</div></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="kpi-mini"><div class="kpi-lbl">Collection Fuel Saved</div><div class="kpi-num">{route_opt["fuel_saved_l"]:.2f} L</div></div>',
+        unsafe_allow_html=True)
 
 st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-
 
 # =========================================================================
 # 8. MAIN DASHBOARD TABS
@@ -542,218 +495,135 @@ tab_vision, tab_graphs, tab_report, tab_twin, tab_copilot, tab_logs = st.tabs([
     "📋 Real Audit & Telemetry Log"
 ])
 
-
 # -------------------------------------------------------------------------
-# TAB 1: LIVE CAMERA & DETECTION (ROBUST FAIL-SAFE CAMERA MODES)
+# TAB 1: IMAGE SNAPSHOT & DETECTION
 # -------------------------------------------------------------------------
 with tab_vision:
     st.subheader("👁️ Live Computer Vision Waste Detection")
-    st.caption("Items detected on camera are IMMEDIATELY added to their specific bin in real-time.")
+    st.caption("Capture a webcam photo or upload an image to detect and classify waste items.")
 
     cv_left, cv_right = st.columns([1.3, 1], gap="large")
 
     with cv_left:
         cam_source = st.radio(
-            "Select Camera Feed:",
-            ["Direct High-Speed Webcam (OpenCV)", "WebRTC Browser Stream", "Instant Snapshot", "Upload Image File"],
-            horizontal=True
+            "📷 Select Detection Mode:",
+            ["📸 Instant Snapshot"],
+            horizontal=True,
+            help="Capture a webcam photo or upload an image for AI waste detection."
         )
 
-        if cam_source == "Direct High-Speed Webcam (OpenCV)":
-            st.caption("Direct local camera stream with instant real-time bin updates.")
-            cam_toggle = st.toggle("Start Direct Camera Stream", value=False)
-            feed_placeholder = st.empty()
-            label_placeholder = st.empty()
+        # ------------------------------------------------------------------
+        # MODE 2: INSTANT SNAPSHOT — Capture one frame, run full YOLO on it
+        # ------------------------------------------------------------------
+        if cam_source == "📸 Instant Snapshot":
+            st.caption(
+                "📸 **SNAPSHOT** — Capture a photo. AI analyses the full image and instantly adds detected items to bins.")
 
-            if cam_toggle:
-                # Load vision model lazily on first camera activation
-                model, model_tag = load_yolo_lazy()
-                
-                # Robust camera initialization (CAP_DSHOW on Windows avoids MSMF error)
-                cap = None
-                try:
-                    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-                    if not cap.isOpened():
-                        cap.release()
-                        cap = cv2.VideoCapture(0)
-                except Exception:
-                    cap = cv2.VideoCapture(0)
-
-                if cap is None or not cap.isOpened():
-                    st.error("⚠️ Cannot access local webcam. Another app or browser tab may be using it. Close other camera apps, or switch to 'Instant Snapshot' or 'WebRTC Browser Stream' above!")
-                else:
-                    stop_feed = st.button("Stop Camera Feed")
-                    try:
-                        while cam_toggle and not stop_feed:
-                            ret, frame = cap.read()
-                            if not ret or frame is None:
-                                time.sleep(0.05)
-                                continue
-
-                            # YOLO Inference
-                            results = model(frame, conf=confidence, imgsz=640, verbose=False)
-                            annotated = results[0].plot()
-                            labels = []
-                            if results[0].boxes is not None:
-                                for c in results[0].boxes.cls:
-                                    labels.append(model.names[int(c)].lower())
-
-                            if labels:
-                                with twin.lock:
-                                    updated, added = twin.process_detection(labels, confidence=confidence, zone=twin.current_zone)
-                                
-                                if updated:
-                                    last_add = added[0]
-                                    label_placeholder.success(f"✅ Classified: **{last_add['item'].title()}** ➔ Added to **{last_add['bin']}** ({last_add['capacity']}%)")
-                                    
-                                    # Check 75% pop-up threshold immediately
-                                    hit_crit = [b for b in twin.allbins if b.capacity >= 75]
-                                    if hit_crit:
-                                        st.session_state["alert_dismissed"] = False
-                                        st.toast(f"🚨 POP-UP ALERT: {hit_crit[0].name} reached {hit_crit[0].capacity}% capacity!", icon="⚠️")
-
-                            feed_placeholder.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
-                            time.sleep(0.02)
-
-                    except Exception as cam_err:
-                        import traceback
-
-                        print("[CAMERA ERROR]", repr(cam_err))
-                        traceback.print_exc()
-                        st.warning(
-                            f"Camera notice: {type(cam_err).__name__}: {cam_err}"
-                        )
-
-
-        elif cam_source == "WebRTC Browser Stream":
-            if HAS_WEBRTC:
-                st.caption("Browser WebRTC stream for remote/cloud environments.")
-
-
-                def webrtc_callback(frame):
-                    img = frame.to_ndarray(format="bgr24")
-
-                    try:
-                        model, _ = load_yolo_lazy()
-
-                        results = model.predict(
-                            source=img,
-                            conf=confidence,
-                            imgsz=416,  # Faster live inference
-                            verbose=False,
-                        )
-
-                        if not results:
-                            return frame
-
-                        result = results[0]
-                        annotated = result.plot()
-
-                        # Extract labels safely
-                        labels = []
-                        if result.boxes is not None and len(result.boxes) > 0:
-                            labels = [
-                                str(model.names[int(cls_id)]).lower()
-                                for cls_id in result.boxes.cls.tolist()
-                            ]
-
-                        # Update digital twin when supported objects are detected
-                        if labels:
-                            with twin.lock:
-                                twin.process_detection(
-                                    labels,
-                                    confidence=confidence,
-                                    zone=twin.current_zone,
-                                )
-
-                        return __import__("av").VideoFrame.from_ndarray(
-                            annotated,
-                            format="bgr24",
-                        )
-
-                    except Exception as exc:
-                        # Don't silently hide the real problem
-                        print(f"[LIVE DETECTION ERROR] {type(exc).__name__}: {exc}")
-                        return __import__("av").VideoFrame.from_ndarray(
-                            img,
-                            format="bgr24",
-                        )
-
-
-                webrtc_streamer(
-                    key="waste-cam-stream",
-                    mode=WebRtcMode.SENDRECV,
-                    rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                    media_stream_constraints={"video": True, "audio": False},
-                    video_frame_callback=webrtc_callback,
+            snap_col1, snap_col2 = st.columns([1, 1])
+            with snap_col1:
+                st.markdown("**Option A — Use Webcam**")
+                cam_photo = st.camera_input("Take a Photo", label_visibility="collapsed")
+            with snap_col2:
+                st.markdown("**Option B — Upload Image**")
+                uploaded_snap = st.file_uploader(
+                    "Upload a waste photo", type=["jpg", "jpeg", "png"],
+                    label_visibility="collapsed"
                 )
-            else:
-                st.warning("streamlit-webrtc not available. Use Direct High-Speed Webcam or Instant Snapshot mode.")
 
-        elif cam_source == "Instant Snapshot":
-            st.caption("Capture a single frame using your webcam. (Guaranteed 100% browser compatibility)")
-            cam_photo = st.camera_input("Take a Photo")
-            if cam_photo is not None:
-                model, _ = load_yolo_lazy()
-                img_buf = np.frombuffer(cam_photo.getvalue(), dtype=np.uint8)
-                frame = cv2.imdecode(img_buf, cv2.IMREAD_COLOR)
-                results = model(frame, conf=confidence, imgsz=640, verbose=False)
-                annotated = results[0].plot()
-                labels = [model.names[int(c)].lower() for c in results[0].boxes.cls] if results[0].boxes is not None else []
-                if labels:
-                    with twin.lock:
-                        updated, added = twin.process_detection(labels, confidence=confidence, zone=twin.current_zone)
-                    if updated:
-                        st.success(f"Verified: {', '.join(labels).title()} ➔ Added to bin!")
-                        st.rerun()
-                st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+            # Pick whichever source has data (webcam takes priority)
+            snap_bytes = cam_photo.getvalue() if cam_photo else (uploaded_snap.getvalue() if uploaded_snap else None)
 
-        elif cam_source == "Upload Image File":
-            st.caption("Upload any waste photograph (plastic, bottle, battery, mask, etc.)")
-            uploaded_file = st.file_uploader("Upload Image", type=["jpg", "jpeg", "png"])
-            if uploaded_file is not None:
-                model, _ = load_yolo_lazy()
-                img_buf = np.frombuffer(uploaded_file.getvalue(), dtype=np.uint8)
-                frame = cv2.imdecode(img_buf, cv2.IMREAD_COLOR)
-                results = model(frame, conf=confidence, imgsz=640, verbose=False)
-                annotated = results[0].plot()
-                labels = [model.names[int(c)].lower() for c in results[0].boxes.cls] if results[0].boxes is not None else []
-                if labels:
-                    with twin.lock:
-                        updated, added = twin.process_detection(labels, confidence=confidence, zone=twin.current_zone)
-                    if updated:
-                        st.success(f"Verified: {', '.join(labels).title()} ➔ Added to bin!")
-                        st.rerun()
-                st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
+            if snap_bytes is not None:
+                with st.spinner("🔍 Running AI detection on snapshot..."):
+                    model, model_tag = load_yolo_lazy()
+                    img_buf = np.frombuffer(snap_bytes, dtype=np.uint8)
+                    snap_frame = cv2.imdecode(img_buf, cv2.IMREAD_COLOR)
 
+                    if snap_frame is not None:
+                        # Full-resolution YOLO on snapshot (no frame-skip needed — single shot)
+                        results = model(snap_frame, conf=confidence, imgsz=640, verbose=False)
+                        annotated_snap = results[0].plot()
+                        labels_snap = []
+                        if results[0].boxes is not None:
+                            for c in results[0].boxes.cls:
+                                labels_snap.append(model.names[int(c)].lower())
+
+                        # Show the annotated snapshot
+                        st.image(
+                            cv2.cvtColor(annotated_snap, cv2.COLOR_BGR2RGB),
+                            use_container_width=True,
+                            caption=f"🤖 {model_tag} Snapshot Detection | imgsz=640 | conf≥{confidence}"
+                        )
+
+                        if labels_snap:
+                            with twin.lock:
+                                updated, added = twin.process_detection(
+                                    labels_snap, confidence=confidence, zone=twin.current_zone
+                                )
+                            if updated:
+                                items_str = ", ".join(f"**{a['Item']}** → **{a['Bin']}**" for a in added)
+                                st.success(f"✅ Detected & logged: {items_str}")
+                                st.balloons()
+                                hit_crit = [b for b in twin.allbins if b.capacity >= 75]
+                                if hit_crit:
+                                    st.session_state["alert_dismissed"] = False
+                                    st.toast(f"🚨 {hit_crit[0].name} at {hit_crit[0].capacity}%!", icon="⚠️")
+                            else:
+                                st.info("Items already recently logged — cooldown active.")
+                        else:
+                            st.warning(
+                                "⚠️ No waste items detected in this image. Try a clearer photo or lower the confidence slider in the sidebar.")
+                    else:
+                        st.error("Could not decode image. Please try a different photo.")
+
+        # ------------------------------------------------------------------
+    # RIGHT PANEL: Latest detection + segregation guide
+    # ------------------------------------------------------------------
     with cv_right:
-        st.markdown("##### 🎯 Real-Time Segregation Guidance")
+        st.markdown("##### 🎯 Latest Detection Result")
         with twin.lock:
             recent_events = list(twin.events[:4])
-        
+
         if recent_events:
             last_ev = recent_events[0]
-            st.markdown(f"""
-            <div style="padding:16px;border-radius:12px;background:rgba(15, 23, 42, 0.9);border:2px solid {last_ev['Color']};margin-bottom:14px;box-shadow: 0 0 15px {last_ev['Color']}40;">
-                <span style="font-size:11px;color:#94a3b8;text-transform:uppercase;">Latest Classified Item</span>
-                <div style="font-size:20px;font-weight:700;color:#f8fafc;margin:4px 0;">{last_ev['Icon']} {last_ev['Item']}</div>
-                <div style="font-size:14px;color:{last_ev['Color']};font-weight:700;">➔ Target: {last_ev['Bin']} ({last_ev['Fill']})</div>
-                <div style="font-size:12px;color:#94a3b8;margin-top:4px;">Confidence: {last_ev['Confidence']} &bull; Time: {last_ev['Time']}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(
+                f'<div style="padding:14px;border-radius:12px;background:rgba(15,23,42,0.9);'
+                f'border:2px solid {last_ev["Color"]};margin-bottom:14px;'
+                f'box-shadow:0 0 12px {last_ev["Color"]}30;">'
+                f'<span style="font-size:11px;color:#94a3b8;text-transform:uppercase;">Last Classified Item</span>'
+                f'<div style="font-size:22px;font-weight:700;color:#f8fafc;margin:6px 0;">'
+                f'{last_ev["Icon"]} {last_ev["Item"]}</div>'
+                f'<div style="font-size:13px;color:{last_ev["Color"]};font-weight:600;">'
+                f'Logged to: {last_ev["Bin"]} — {last_ev["Fill"]}</div>'
+                f'<div style="font-size:11px;color:#94a3b8;margin-top:4px;">'
+                f'Conf: {last_ev["Confidence"]} &bull; {last_ev["Time"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+            st.markdown("##### 📊 Recent Detection Log")
+            for ev in recent_events:
+                st.markdown(
+                    f'<div style="padding:6px 10px;border-radius:8px;background:rgba(15,23,42,0.7);'
+                    f'border-left:3px solid {ev["Color"]};margin-bottom:5px;font-size:12px;">'
+                    f'{ev["Icon"]} <b>{ev["Item"]}</b> → {ev["Bin"]} ({ev["Fill"]}) '
+                    f'<span style="color:#64748b;font-size:10px;">{ev["Time"]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
         else:
-            st.info("Awaiting waste item. Place an item in front of the camera or click 'Deposit' above.")
+            st.info("No detections yet. Start the camera or take a snapshot.")
 
-        st.markdown("##### 💡 Segregation Stream Directory")
+        st.divider()
+        st.markdown("##### 💡 Waste Segregation Guide")
         st.markdown("""
-        - 🔵 **Plastic Bin:** Bottles, transparent cups, grocery bags, wrappers
-        - 📦 **Paper Bin:** Cardboard boxes, clean documents, dry napkins
-        - 🥫 **Metal Bin:** Soda cans, food tins, aluminum foil, caps
-        - ⚡ **Electronics Bin:** Batteries, chargers, cables, phones, chips
-        - ☣️ **Medical Bin:** Masks, latex gloves, blister packs, syringes
-        - 🍏 **Organic Bin:** Fruit peels, food leftovers, bread, leaves
+- 🔵 **Plastic** — Bottles, cups, bags, wrappers
+- 📦 **Paper** — Cardboard, documents, dry napkins
+- 🥫 **Metal** — Cans, tins, aluminium foil
+- ⚡ **Electronics** — Batteries, chargers, cables, phones
+- ☣️ **Medical** — Masks, gloves, blister packs
+- 🍏 **Organic** — Peels, food scraps, leaves
         """)
-
 
 # -------------------------------------------------------------------------
 # TAB 2: BINS USAGE GRAPHS & ANALYTICS
@@ -787,7 +657,8 @@ with tab_graphs:
             dist_df = pd.DataFrame(list(active_counts.items()), columns=["Category", "Count"])
             st.bar_chart(dist_df.set_index("Category"), color="#8b5cf6", use_container_width=True)
         else:
-            st.info("No items deposited yet. Present waste to the camera or use the Deposit button above to generate usage charts.")
+            st.info(
+                "No items deposited yet. Present waste to the camera or use the Deposit button above to generate usage charts.")
 
     with g_col4:
         st.markdown("##### ⏱️ User Disposal Activity Timeline")
@@ -799,7 +670,6 @@ with tab_graphs:
             st.area_chart(hourly_counts, use_container_width=True)
         else:
             st.caption("Disposal timeline will plot automatically as waste is detected.")
-
 
 # -------------------------------------------------------------------------
 # TAB 3: AI MONTHLY EXECUTIVE REPORT
@@ -850,6 +720,7 @@ with tab_report:
         else:
             if st.button("Compile PDF Now", use_container_width=True, type="primary"):
                 from app.report_generator import generate_pdf_report
+
                 rep_payload = {
                     "title": "Smart Waste Management Digital Twin",
                     "month": datetime.now().strftime("%B %Y"),
@@ -862,7 +733,6 @@ with tab_report:
                 }
                 st.session_state["cached_pdf"] = generate_pdf_report(rep_payload)
                 st.rerun()
-
 
 # -------------------------------------------------------------------------
 # TAB 4: FLEET LOGISTICS & ROUTE OPTIMIZER
@@ -891,7 +761,6 @@ with tab_twin:
         m2.metric("Fuel Saved", f"{route_opt['fuel_saved_l']:.2f} L")
         st.metric("Net CO₂ Avoided", f"{route_opt['co2_avoided_kg']:.2f} kg")
 
-
 # -------------------------------------------------------------------------
 # TAB 5: GENAI TWIN COPILOT (ANSWERS USER'S EXACT QUERY)
 # -------------------------------------------------------------------------
@@ -899,11 +768,13 @@ with tab_copilot:
     st.subheader("💬 Ask WasteTwin AI Copilot")
     st.caption("Directly answers questions about waste segregation, fill levels, e-waste, or collection routes.")
 
-    copilot_query = st.chat_input("Ask a question (e.g. 'Can I recycle batteries?', 'Where does a pizza box go?', or 'Which bin is fullest?')...")
+    copilot_query = st.chat_input(
+        "Ask a question (e.g. 'Can I recycle batteries?', 'Where does a pizza box go?', or 'Which bin is fullest?')...")
 
     if "copilot_history" not in st.session_state:
         st.session_state.copilot_history = [
-            ("assistant", "Hello! I am your Smart Waste Management Digital Twin Copilot. Ask me where any waste item belongs, check real-time bin levels, or inquire about collection logistics.")
+            ("assistant",
+             "Hello! I am your Smart Waste Management Digital Twin Copilot. Ask me where any waste item belongs, check real-time bin levels, or inquire about collection logistics.")
         ]
 
     if copilot_query:
@@ -923,15 +794,14 @@ with tab_copilot:
         with st.chat_message(role):
             st.markdown(text)
 
-
 # -------------------------------------------------------------------------
 # TAB 6: REAL AUDIT & TELEMETRY LOG
 # -------------------------------------------------------------------------
 with tab_logs:
     st.subheader("📋 Verified Audit Trail & Telemetry Records")
-    
+
     l_c1, l_c2 = st.columns(2, gap="medium")
-    
+
     with l_c1:
         st.markdown("##### ⚡ Recent Detection Stream")
         with twin.lock:
@@ -948,3 +818,4 @@ with tab_logs:
             st.dataframe(hist.tail(100), use_container_width=True, hide_index=True)
         else:
             st.caption("CSV files are currently empty.")
+

@@ -6,6 +6,7 @@ from datetime import datetime
 from model.Bin import Bin
 from data.DataManager import DataUtil
 
+
 class DigitalTwinState:
     """
     Core Digital Twin Engine for Smart Waste Management.
@@ -130,7 +131,8 @@ class DigitalTwinState:
             return "Paper", self.bin_paper, self.bin_paper.color, self.bin_paper.icon
         if any(w in label for w in ["metal", "can", "tin", "aluminum", "foil", "wire"]):
             return "Metal", self.bin_metal, self.bin_metal.color, self.bin_metal.icon
-        if any(w in label for w in ["battery", "cable", "phone", "circuit", "laptop", "mouse", "charger", "electronic"]):
+        if any(w in label for w in
+               ["battery", "cable", "phone", "circuit", "laptop", "mouse", "charger", "electronic"]):
             return "Electronics", self.bin_electronics, self.bin_electronics.color, self.bin_electronics.icon
         if any(w in label for w in ["mask", "glove", "syringe", "pill", "gauze", "medical", "bandage"]):
             return "Medical", self.bin_medical, self.bin_medical.color, self.bin_medical.icon
@@ -159,7 +161,7 @@ class DigitalTwinState:
             seen.add(item)
 
             cat, target_bin, color, icon = self.classify_item(item)
-            
+
             # Increment fill level truthfully
             target_bin.addItem({
                 "Timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -196,14 +198,14 @@ class DigitalTwinState:
         total_items = sum(len(b.getItems()) for b in self.allbins)
         diverted_kg = round(sum(b.current_weight_kg for b in self.allbins), 2)
         co2_saved_kg = round(diverted_kg * 0.62, 2)
-        
+
         # Recycling rate based on recyclable bins (Plastic, Paper, Metal, Electronics, Organic)
         recyclable_items = (
-            len(self.bin_plastic.getItems()) +
-            len(self.bin_paper.getItems()) +
-            len(self.bin_metal.getItems()) +
-            len(self.bin_electronics.getItems()) +
-            len(self.bin_organic.getItems())
+                len(self.bin_plastic.getItems()) +
+                len(self.bin_paper.getItems()) +
+                len(self.bin_metal.getItems()) +
+                len(self.bin_electronics.getItems()) +
+                len(self.bin_organic.getItems())
         )
         rate = round((recyclable_items / max(1, total_items)) * 100, 1) if total_items > 0 else 0.0
 
@@ -221,7 +223,7 @@ class DigitalTwinState:
         """
         critical_bins = [b for b in self.allbins if b.capacity >= threshold]
         baseline_km = 14.0
-        
+
         if not critical_bins:
             return {
                 "dispatched": False,
